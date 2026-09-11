@@ -76,7 +76,6 @@ export default function SilentFlow() {
 
     const camera = new UnicoCheckBuilder()
       .setEnvironment(SDKEnvironmentTypes[config.SDK_ENVIRONMENT])
-      .setModelsPath('/models')
       .build();
 
     camera.setSilentInfo(id, config.USE_CASE);
