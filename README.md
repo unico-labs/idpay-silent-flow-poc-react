@@ -31,6 +31,8 @@ O botão **Fluxo completo** roda tudo em sequência. A linha de status mostra o 
   <img width="480" src="docs/screenshots/tela-principal.png" alt="Tela principal da POC">
 </p>
 
+> ℹ️ O fluxo silencioso **não precisa dos recursos adicionais** da SDK (FaceTec/models do passo 4 do guia de instalação) — eles só são necessários quando a câmera é aberta para captura.
+>
 > ⚠️ **Host da página**: a SDK Web valida o host **real** da página contra os hosts registrados na SDK Key e exige um contexto seguro do browser — em HTTP puro, só `localhost` funciona; qualquer outro host exige **HTTPS**.
 >
 > ⚠️ O `externalUserId` da coleta e o `additionalInfo.externalUserID` da transação precisam ser **idênticos, char a char**.
