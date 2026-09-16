@@ -10,7 +10,7 @@ export default {
   HOSTNAME: '',
 
   // DEV | UAT | PROD
-  SDK_ENVIRONMENT: 'UAT',
+  SDK_ENVIRONMENT: import.meta.env.VITE_SDK_ENVIRONMENT || 'UAT',
 
   // Your IDPay company UUID (transaction owner).
   COMPANY_ID: import.meta.env.VITE_COMPANY_ID || 'YOUR_COMPANY_ID',

@@ -54,6 +54,7 @@ Este repositório **não contém nenhuma credencial real**. Copie `.env.local.ex
 | --- | --- |
 | `VITE_SDK_KEY` | Sua **SDK Key Web** (by client), registrada para o host da página e com o envio de `silentInfo` habilitado |
 | `VITE_COMPANY_ID` | O UUID da sua company no IDPay |
+| `VITE_SDK_ENVIRONMENT` | Opcional: `DEV`, `UAT` ou `PROD`. Padrão `UAT` se não definido |
 
 O **access token (Bearer)** **não é hardcoded** — cole-o no campo "Bearer token" da tela antes de rodar, já que costuma ter validade curta.
 
@@ -68,7 +69,7 @@ Por padrão a POC cria a transação direto na API de **UAT**. Pra testar contra
 | `VITE_API_TARGET` | `http://localhost:8888` |
 | `VITE_MIRRORD_USER` | Um identificador seu (ex: seu usuário do unico.io) |
 
-Isso exige, no [monorepo `unico`](https://github.com/acesso-io/unico):
+Normalmente isso é usado junto com `VITE_SDK_ENVIRONMENT=DEV` (a coleta de device também precisa apontar pro mesmo ambiente da transação). Além das env vars acima, isso exige, no [monorepo `unico`](https://github.com/acesso-io/unico):
 1. `bazelisk run //idpay/deployments/mirrord/transactions-api`, com o `header_filter` do `mirrord.json` usando o **mesmo** valor de `VITE_MIRRORD_USER`.
 2. Um `kubectl port-forward -n transactions-api pod/<pod-transactions-api> 8888:80` rodando em paralelo (a API de DEV descarta o header do mirrord na borda pública, então o proxy da POC fala direto com o pod).
 
