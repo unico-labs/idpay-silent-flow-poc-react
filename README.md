@@ -20,7 +20,7 @@
 Este projeto testa o fluxo de **validação silenciosa de transações** em uma aplicação web:
 
 1. A aplicação roda a **SDK Web** da Unico em modo silencioso — **sem abrir a câmera** nem exigir nenhuma captura do usuário:
-   - `initializeSDK(unicoConfig)` roda **no carregamento da página**, fora do caminho crítico: enquanto o usuário preenche os dados, a SDK já se autentica e aquece a coleta;
+   - `initializeSDK(unicoConfig)` abre uma **sessão de coleta** fora do caminho crítico: a primeira no carregamento da página, e uma nova depois de cada coleta, em background — **cada validação usa a própria sessão**;
    - `startSilentValidation(externalUserId)` roda na ação do usuário e **resolve quando a coleta foi enviada** — sem espera fixa.
 2. A aplicação cria uma transação no IDPay (`POST /api/public/v1/credit/transaction`) com o **mesmo `externalUserId`** em `additionalInfo.externalUserID`. Em uma integração real essa chamada é feita pelo **backend do cliente** (server-to-server) — na POC, o proxy de dev do Vite (`vite.config.js`) faz esse papel.
 3. Resultado:
@@ -85,7 +85,7 @@ Sem essas duas variáveis preenchidas, a POC continua se comportando como hoje (
 
 Não há espera fixa para calibrar: a promise do `startSilentValidation` resolve quando a coleta foi **enviada**. Basta manter uma margem curta antes de criar a transação (`POST_SEND_WAIT_MS` em `src/config.js`, padrão 1500ms), para o backend processar a coleta.
 
-Medido nesta POC (UAT, desktop): `initializeSDK` leva ~2,2s, mas roda no carregamento da página, invisível para o usuário; na ação do usuário, a coleta leva **~0,5s**. A mesma página pode coletar várias vezes sem recarregar — o `initializeSDK` roda uma vez só.
+Medido nesta POC (UAT, desktop): `initializeSDK` leva ~2,2s, mas roda no carregamento da página, invisível para o usuário; na ação do usuário, a coleta leva **~0,5s**. A mesma página pode validar várias vezes sem recarregar: cada coleta abre a sessão da próxima.
 
 A coleta vale por **5 minutos**, então também pode ser disparada antes na jornada. Se ela falhar, o fluxo degrada sem erro: a transação segue o fluxo padrão, com challenge.
 

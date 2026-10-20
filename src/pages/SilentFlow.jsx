@@ -42,34 +42,27 @@ export default function SilentFlow() {
     setLogs((prev) => [...prev, `[${ts}] ${message}`]);
   };
 
-  // Initializes the SDK once; a failed attempt is retried on the next call.
-  const ensureSdk = () => {
-    const sdk = sdkRef.current;
-    if (!sdk.ready) {
-      sdk.ready = sdk.camera.initializeSDK(sdk.unicoConfig).catch((error) => {
-        sdk.ready = null;
-        throw error;
-      });
-    }
-    return sdk.ready;
+  // Opens a collection session in background. One session serves one
+  // validation journey, so a new one is opened for each validation.
+  const openSession = () => {
+    const camera = new UnicoCheckBuilder()
+      .setEnvironment(SDKEnvironmentTypes[config.SDK_ENVIRONMENT])
+      .build();
+    const unicoConfig = new UnicoConfig()
+      .setHostname(config.HOSTNAME || window.location.origin)
+      .setHostKey(config.SDK_KEY);
+    const ready = camera.initializeSDK(unicoConfig);
+    ready
+      .then(() => addLog('initializeSDK: ok — collection session ready'))
+      .catch((error) => addLog(`initializeSDK FAILED: ${describe(error)}`));
+    sdkRef.current = { camera, ready };
+    return sdkRef.current;
   };
 
-  // The SDK is initialized as soon as the page loads, off the critical path:
-  // by the time the user acts, only the collection itself is left.
+  // The first session opens as soon as the page loads, off the critical
+  // path: by the time the user acts, only the collection itself is left.
   useEffect(() => {
-    if (sdkRef.current) return;
-    sdkRef.current = {
-      unicoConfig: new UnicoConfig()
-        .setHostname(config.HOSTNAME || window.location.origin)
-        .setHostKey(config.SDK_KEY),
-      camera: new UnicoCheckBuilder()
-        .setEnvironment(SDKEnvironmentTypes[config.SDK_ENVIRONMENT])
-        .build(),
-      ready: null,
-    };
-    ensureSdk()
-      .then(() => addLog('initializeSDK: ok — SDK ready'))
-      .catch((error) => addLog(`initializeSDK FAILED: ${describe(error)} — retrying on collect`));
+    if (!sdkRef.current) openSession();
   }, []);
 
   // Return from the fallback challenge (transaction redirectUrl).
@@ -92,10 +85,20 @@ export default function SilentFlow() {
     if (!id) throw new Error('fill the externalUserId (or the CPF)');
 
     setStatus('⏳ Coletando dados de device…');
-    await ensureSdk();
+    let session = sdkRef.current;
+    try {
+      await session.ready;
+    } catch {
+      session = openSession();
+      await session.ready;
+    }
 
-    // Resolves once the collection has been sent.
-    await sdkRef.current.camera.startSilentValidation(id, config.USE_CASE);
+    try {
+      // Resolves once the collection has been sent.
+      await session.camera.startSilentValidation(id, config.USE_CASE);
+    } finally {
+      openSession();
+    }
 
     collectReadyAtRef.current = Date.now() + config.POST_SEND_WAIT_MS;
     setStatus(`✓ Dados de device enviados (${new Date().toLocaleTimeString('pt-BR')})`);
