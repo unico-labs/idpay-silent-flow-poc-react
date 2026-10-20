@@ -19,13 +19,15 @@
 
 Este projeto testa o fluxo de **validação silenciosa de transações** em uma aplicação web:
 
-1. A aplicação roda a **SDK Web** da Unico em modo silencioso: `setSilentInfo(externalUserId)` + `prepareSelfieCamera` — **sem abrir a câmera** nem exigir nenhuma captura do usuário. A coleta de dados de device sai em background.
+1. A aplicação roda a **SDK Web** da Unico em modo silencioso — **sem abrir a câmera** nem exigir nenhuma captura do usuário:
+   - `initializeSDK(unicoConfig)` roda **no carregamento da página**, fora do caminho crítico: enquanto o usuário preenche os dados, a SDK já se autentica e aquece a coleta;
+   - `startSilentValidation(externalUserId)` roda na ação do usuário e **resolve quando a coleta foi enviada** — sem espera fixa.
 2. A aplicação cria uma transação no IDPay (`POST /api/public/v1/credit/transaction`) com o **mesmo `externalUserId`** em `additionalInfo.externalUserID`. Em uma integração real essa chamada é feita pelo **backend do cliente** (server-to-server) — na POC, o proxy de dev do Vite (`vite.config.js`) faz esse papel.
 3. Resultado:
    - `status: approved` → **aprovação silenciosa**, sem nenhuma fricção (tela verde);
    - senão → a página redireciona para o `link` de challenge (mesma aba, como numa integração real).
 
-O botão **Fluxo completo** roda tudo em sequência. A linha de status mostra o ciclo da coleta (`⏳ enviando… → ✓ dados prontos`) e o painel de logs registra cada etapa com tempos medidos — a espera da janela de envio (5s) só aparece para o usuário se a transação for pedida antes de ela fechar.
+O botão **Fluxo completo** roda tudo em sequência. Depois do envio confirmado, a transação respeita uma margem curta de processamento (`POST_SEND_WAIT_MS`, 1,5s), absorvida no loading só se a transação for pedida logo em seguida. Se a coleta falhar, o fluxo degrada sem erro: a transação segue o fluxo padrão, com challenge.
 
 <p align="center">
   <img width="480" src="docs/screenshots/tela-principal.png" alt="Tela principal da POC">
@@ -44,7 +46,7 @@ O botão **Fluxo completo** roda tudo em sequência. A linha de status mostra o 
 ## 💻 Compatibilidade
 
 - **Node:** 18 ou superior
-- **React:** 18 · **Vite:** 5 · **unico-webframe:** 3.26+
+- **React:** 18 · **Vite:** 5 · **unico-webframe:** 3.28+ (`initializeSDK` / `startSilentValidation`)
 
 ---
 
@@ -79,6 +81,16 @@ Sem essas duas variáveis preenchidas, a POC continua se comportando como hoje (
 
 ---
 
+## ⏱️ Tempos
+
+Não há espera fixa para calibrar: a promise do `startSilentValidation` resolve quando a coleta foi **enviada**. Basta manter uma margem curta antes de criar a transação (`POST_SEND_WAIT_MS` em `src/config.js`, padrão 1500ms), para o backend processar a coleta.
+
+Medido nesta POC (UAT, desktop): `initializeSDK` leva ~2,2s, mas roda no carregamento da página, invisível para o usuário; na ação do usuário, a coleta leva **~0,5s**. A mesma página pode coletar várias vezes sem recarregar — o `initializeSDK` roda uma vez só.
+
+A coleta vale por **5 minutos**, então também pode ser disparada antes na jornada. Se ela falhar, o fluxo degrada sem erro: a transação segue o fluxo padrão, com challenge.
+
+---
+
 ## ▶️ Rodando o teste
 
 ```bash
@@ -87,6 +99,6 @@ npm run dev   # http://localhost:3000
 ```
 
 1. Preencha o `externalUserId` (vazio, usa o CPF), CPF e cartão (bin/últimos 4) — ou mantenha os exemplos — e cole o Bearer token.
-2. **Cenário rápido:** clique em **Fluxo completo** — a coleta roda em background e a transação sai assim que a janela de envio fecha (o loading absorve só o tempo restante).
-3. **Cenário recomendado:** clique em **Coletar dados de device**, aguarde o status virar `✓ Dados de device prontos` e então **Criar transação silenciosa** — sai instantaneamente, sem loading extra.
+2. **Cenário rápido:** clique em **Fluxo completo** — coleta e transação em sequência (o loading absorve a margem de processamento).
+3. **Cenário recomendado:** clique em **Coletar dados de device**, aguarde o status `✓ Dados de device enviados` e então **Criar transação silenciosa** — sai sem loading extra.
 4. Acompanhe o resultado: tela verde **Aprovado!** (validação silenciosa) ou redirecionamento para o challenge.

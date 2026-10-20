@@ -1,17 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  UnicoCheckBuilder,
-  UnicoConfig,
-  SDKEnvironmentTypes,
-  SelfieCameraTypes,
-} from 'unico-webframe';
+import { UnicoCheckBuilder, UnicoConfig, SDKEnvironmentTypes } from 'unico-webframe';
 import config from '../config';
+
+const describe = (error) => `${error?.code ?? ''} ${error?.message ?? error}`.trim();
 
 /**
  * IDPay Silent Flow POC (web): silent device data collection through the Unico
- * web SDK (setSilentInfo + prepare — the camera is never opened), followed by
- * an IDPay transaction that is approved silently when the collected device
- * matches the user history.
+ * web SDK (initializeSDK + startSilentValidation — the camera is never opened),
+ * followed by an IDPay transaction that is approved silently when the collected
+ * device matches the user history.
  */
 export default function SilentFlow() {
   // Fields survive the same-tab round trip to the fallback challenge
@@ -35,15 +32,45 @@ export default function SilentFlow() {
   const [logs, setLogs] = useState([]);
   const [overlay, setOverlay] = useState(null); // null | 'processing' | 'approved'
 
-  // Upload grace window, counted in background from the end of the prepare.
-  const graceDeadlineRef = useRef(0);
+  // When the last collection becomes available to the transaction: send
+  // confirmation + processing margin.
   const collectReadyAtRef = useRef(0);
-  const generationRef = useRef(0);
+  const sdkRef = useRef(null);
 
   const addLog = (message) => {
     const ts = new Date().toLocaleTimeString('pt-BR');
     setLogs((prev) => [...prev, `[${ts}] ${message}`]);
   };
+
+  // Initializes the SDK once; a failed attempt is retried on the next call.
+  const ensureSdk = () => {
+    const sdk = sdkRef.current;
+    if (!sdk.ready) {
+      sdk.ready = sdk.camera.initializeSDK(sdk.unicoConfig).catch((error) => {
+        sdk.ready = null;
+        throw error;
+      });
+    }
+    return sdk.ready;
+  };
+
+  // The SDK is initialized as soon as the page loads, off the critical path:
+  // by the time the user acts, only the collection itself is left.
+  useEffect(() => {
+    if (sdkRef.current) return;
+    sdkRef.current = {
+      unicoConfig: new UnicoConfig()
+        .setHostname(config.HOSTNAME || window.location.origin)
+        .setHostKey(config.SDK_KEY),
+      camera: new UnicoCheckBuilder()
+        .setEnvironment(SDKEnvironmentTypes[config.SDK_ENVIRONMENT])
+        .build(),
+      ready: null,
+    };
+    ensureSdk()
+      .then(() => addLog('initializeSDK: ok — SDK ready'))
+      .catch((error) => addLog(`initializeSDK FAILED: ${describe(error)} — retrying on collect`));
+  }, []);
 
   // Return from the fallback challenge (transaction redirectUrl).
   useEffect(() => {
@@ -62,41 +89,17 @@ export default function SilentFlow() {
   /** Runs the silent collection. No camera is ever shown. */
   const collect = async () => {
     const id = resolveExternalUserId();
-    if (!id) {
-      addLog('ERROR: fill the externalUserId (or the CPF)');
-      throw new Error('missing externalUserId');
-    }
+    if (!id) throw new Error('fill the externalUserId (or the CPF)');
 
-    setStatus('⏳ Preparando coleta…');
-    addLog(`collect: setSilentInfo(${id}, ${config.USE_CASE}) + prepare`);
+    setStatus('⏳ Coletando dados de device…');
+    await ensureSdk();
 
-    const unicoConfig = new UnicoConfig()
-      .setHostname(config.HOSTNAME || window.location.origin)
-      .setHostKey(config.SDK_KEY);
+    // Resolves once the collection has been sent.
+    await sdkRef.current.camera.startSilentValidation(id, config.USE_CASE);
 
-    const camera = new UnicoCheckBuilder()
-      .setEnvironment(SDKEnvironmentTypes[config.SDK_ENVIRONMENT])
-      .build();
-
-    camera.setSilentInfo(id, config.USE_CASE);
-
-    // prepare only — open() is never called. The SDK sends the hashed
-    // externalUserId with the device collection in background.
-    await camera.prepareSelfieCamera(unicoConfig, SelfieCameraTypes.SMART);
-
-    collectReadyAtRef.current = Date.now();
-    graceDeadlineRef.current = collectReadyAtRef.current + config.GRACE_MS;
-    const generation = ++generationRef.current;
-
-    setStatus('⏳ Enviando dados de device em background…');
-    addLog(`collect: started in background (grace window: ${config.GRACE_MS}ms)`);
-
-    setTimeout(() => {
-      if (generation === generationRef.current) {
-        setStatus(`✓ Dados de device prontos (${new Date().toLocaleTimeString('pt-BR')})`);
-        addLog('collect: upload window closed — device data ready');
-      }
-    }, config.GRACE_MS);
+    collectReadyAtRef.current = Date.now() + config.POST_SEND_WAIT_MS;
+    setStatus(`✓ Dados de device enviados (${new Date().toLocaleTimeString('pt-BR')})`);
+    addLog(`collect: sent for externalUserId=${id}`);
   };
 
   const onCollectClick = async () => {
@@ -107,54 +110,43 @@ export default function SilentFlow() {
     }
   };
 
+  // Without a collection, the transaction simply follows the standard flow
+  // with the visual challenge.
   const onCollectError = (error) => {
-    generationRef.current++;
+    collectReadyAtRef.current = 0;
     setStatus('✖ Falha na coleta de device');
-    addLog(`collect FAILED: ${error?.code ?? ''} ${error?.message ?? error}`);
+    addLog(`collect FAILED: ${describe(error)}`);
   };
 
   // ------------------------------------------------------------ transaction
 
   /**
-   * Creates the transaction respecting the collection grace window: if the
-   * upload still needs time, that wait is absorbed into the loading overlay;
-   * otherwise the request goes out immediately.
+   * Creates the transaction. Right after a collection, the remaining
+   * processing margin is absorbed into the loading overlay.
    */
   const createTransactionWhenReady = () => {
-    setOverlay('processing');
-
-    const now = Date.now();
-    const remainingMs = graceDeadlineRef.current - now;
-    const sinceCollectMs = now - collectReadyAtRef.current;
-    if (remainingMs > 0) {
-      addLog(`transaction: requested ${sinceCollectMs}ms after collect → absorbing ${remainingMs}ms into loading`);
-      setTimeout(createTransaction, remainingMs);
-    } else if (collectReadyAtRef.current > 0) {
-      addLog(`transaction: upload window already closed (collect ${sinceCollectMs}ms ago) → no extra wait`);
-      createTransaction();
-    } else {
-      addLog('transaction: no collection in this session → sending as-is');
-      createTransaction();
-    }
-  };
-
-  const createTransaction = async () => {
     const missing = [];
     if (!cpf.trim()) missing.push('CPF');
     if (!bin.trim()) missing.push('binDigits');
     if (!lastDigits.trim()) missing.push('lastDigits');
     if (!token.trim()) missing.push('Bearer token');
+    if (config.COMPANY_ID.startsWith('YOUR_')) missing.push('VITE_COMPANY_ID (.env.local)');
     if (missing.length > 0) {
       addLog(`ERROR: missing ${missing.join(', ')}`);
-      setOverlay(null);
-      return;
-    }
-    if (config.COMPANY_ID.startsWith('YOUR_')) {
-      addLog('ERROR: fill COMPANY_ID in src/config.js');
-      setOverlay(null);
       return;
     }
 
+    setOverlay('processing');
+    const remainingMs = collectReadyAtRef.current - Date.now();
+    if (remainingMs > 0) {
+      addLog(`transaction: waiting ${remainingMs}ms of processing margin`);
+      setTimeout(createTransaction, remainingMs);
+    } else {
+      createTransaction();
+    }
+  };
+
+  const createTransaction = async () => {
     const body = {
       identity: { key: 'cpf', value: cpf.trim() },
       orderNumber: `silent-flow-react-poc-${Date.now()}`,
@@ -187,7 +179,7 @@ export default function SilentFlow() {
       const json = await res.json().catch(() => null);
       onTransactionResponse(res.status, json);
     } catch (error) {
-      addLog(`request ERROR: ${error?.message ?? error}`);
+      addLog(`request ERROR: ${describe(error)}`);
       setOverlay(null);
     }
   };

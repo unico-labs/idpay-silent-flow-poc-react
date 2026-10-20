@@ -18,8 +18,7 @@ export default {
   // Collection identification.
   USE_CASE: 'idpay-silent-flow-poc-react',
 
-  // Grace period (ms) after the prepare for the SDK fire-and-forget upload to
-  // leave the device. Counted in background; the transaction only waits for
-  // whatever is still remaining.
-  GRACE_MS: 5000,
+  // Margin (ms) after the send confirmation, for the backend to process the
+  // collection before the transaction is created.
+  POST_SEND_WAIT_MS: 1500,
 };
